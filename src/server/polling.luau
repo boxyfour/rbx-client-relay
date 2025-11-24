@@ -1,27 +1,29 @@
 --!strict
--- TODO:
---- TIMED REQUESTS
 
 local HttpService = game:GetService("HttpService")
 local Players = game:GetService("Players")
-local ServerScriptService = game:GetService("ServerScriptService")
 
-local poller = {
-	servers = {},
-	commands = {
-		status = "in_progress",
-		action = "test",
-	},
-}
+--[[
+A class that allows for communication between a web api and the current roblox server.
+Features:
+* re-register after server goes down
+* can run commands from server
+* updates server statistics
+]]
+local poller = {}
 poller.__index = poller
 
 local pollers = 0
 
 -- helpers
+
 -- wrapper for a pcall, times out after specified time
+-- useful for long polling, since the server doesn't send a request until there's actual message
 local function pcall_timeout(callback: () -> (), timeout: number)
 	local success, result
 	local finished = false
+
+	-- Seperate thread, once it finishes, breaks the loop & returns
 	local thread = task.spawn(function()
 		local succ, res = pcall(callback)
 
@@ -47,15 +49,18 @@ local function pcall_timeout(callback: () -> (), timeout: number)
 	return success, result
 end
 
+-- not necessarily useful, but if there are multiple pollers, it prevents one from being confused with the other
 local function generate_name()
 	pollers += 1
 	return `poller {pollers}`
 end
 
+-- Runs callbacks in a thread until each are finished.
 local function join_threads(callbacks: { () -> () })
+	-- Once each callback finishes, it'll add a value to completed count. It'll only return once all are completed (usually used with pcall_timeout)
 	local completed_count = 0
 	local completed_target = #callbacks
-	local interval = 500 -- ms
+	local interval = 0.5 -- seconds
 
 	local threads = {}
 
@@ -105,6 +110,8 @@ type action = {
 	id: string,
 }
 
+-- Error logging.
+-- Used instead of directly warning, because it's easier to disable warnings in the config
 function poller:error(text: string)
 	local config = self.config
 
@@ -113,6 +120,8 @@ function poller:error(text: string)
 	end
 end
 
+-- Logging.
+-- Used instead of directly printtng, because it's easier to disable printing in the config
 function poller:log(text: string)
 	local config = self.config
 
@@ -121,8 +130,9 @@ function poller:log(text: string)
 	end
 end
 
--- shorthand function to return a body
-function poller:get_body(params, timeout)
+-- shorthand function to return a body.
+-- returns nil otherwise
+function poller:get_body(params: { [string]: string }, timeout: number?): string?
 	local pcall_closure = function()
 		local request = HttpService:RequestAsync(params)
 
@@ -131,7 +141,7 @@ function poller:get_body(params, timeout)
 
 	local success, failure
 
-	if not params then
+	if not timeout then
 		success, failure = pcall(pcall_closure)
 	else
 		success, failure = pcall_timeout(pcall_closure, timeout)
@@ -143,11 +153,10 @@ function poller:get_body(params, timeout)
 		return
 	end
 
-	-- if success, returns data
 	return failure
 end
 
--- deletes server
+-- Deletes server upon closing.
 function poller:delete()
 	if not self._poller_id then
 		return
@@ -159,6 +168,7 @@ function poller:delete()
 		Headers = self.headers,
 	}
 
+	-- sends data & gets response
 	local data = self:get_body(parameters, 1)
 
 	if data then
@@ -168,7 +178,7 @@ function poller:delete()
 end
 
 -- Registers the poller with the backend
-function poller:register(): (boolean, string?)
+function poller:register(): string?
 	local parameters = {
 		Url = `{self.ip}/servers`,
 		Method = "POST",
@@ -182,6 +192,9 @@ function poller:register(): (boolean, string?)
 	return self:get_body(parameters, self.config.timeout)
 end
 
+-- Attempts to claim a "global" action.
+-- Certain operations (like adding currency to a player, or kicking a player) only need to be done once.
+-- So, this function tries to claim an action in order to prevent other pollers from doing the same.
 function poller:claim_action(action: action): boolean
 	local parameters = {
 		Url = `{self.ip}/servers/global/{self._poller_id}`,
@@ -192,10 +205,7 @@ function poller:claim_action(action: action): boolean
 		}),
 	}
 
-	print("Trying to claim global action:", action)
-
 	local body = self:get_body(parameters, 1)
-
 	if not body then
 		return
 	end
@@ -203,34 +213,7 @@ function poller:claim_action(action: action): boolean
 	return HttpService:JSONDecode(body).success
 end
 
--- returns servers
-function poller:get_servers(): { server }?
-	local parameters = {
-		Url = `{self.ip}/servers`,
-		Method = "GET",
-		Headers = self.headers,
-	}
-	-- returns and errors anyway
-	local data = self:get_body(parameters, 1)
-
-	if not data then
-		return
-	end
-
-	local servers = HttpService:JSONDecode(data)
-	local valid = {}
-
-	for _, server: server in servers do
-		if server.server_id == self._poller_id then
-			continue
-		end
-
-		table.insert(valid, server)
-	end
-
-	return servers
-end
-
+-- Re-registers with the backend in the event that the server closes down.
 function poller:reregister()
 	local parameters = {
 		Url = `{self.ip}/servers`,
@@ -247,7 +230,7 @@ function poller:reregister()
 	return self:get_body(parameters, self.config.timeout)
 end
 
--- updates server statistics
+-- Updates server statistics
 function poller:heartbeat()
 	local parameters = {
 		Url = `{self.ip}/servers/{self._poller_id}`,
@@ -262,9 +245,11 @@ function poller:heartbeat()
 
 	local data = self:get_body(parameters, 1)
 
+	-- Didn't get a response, it's likely the server is down.
 	if not data then
 		self:error(`failed to update server data on heartbeat`)
 
+		-- It's normal for requests to fail sometimes, so to avoid issues, we just reset the value
 		if os.clock() - self.last_fail > self.reset_counter_interval then
 			self.failed_counter = 0
 		end
@@ -272,6 +257,7 @@ function poller:heartbeat()
 		self.failed_counter += 1
 	end
 
+	-- Re-registers once the threshold is breached
 	if self.failed_counter > self.maximum_fails then
 		local success = self:reregister()
 
@@ -279,41 +265,41 @@ function poller:heartbeat()
 			self.failed_counter = 0
 		end
 	end
-
-	self.servers = self:get_servers()
 end
 
 -- polls the server for new commands
 function poller:poll()
-	local closure = function()
-		local function handle_request(request: action)
-			if request.id and not self:claim_action(request) then
-				print("already claimed action!")
-				return
-			end
-
-			local listeners = self._listeners[request.topic]
-			local requirements = self._requirements
-
-			if requirements then
-				for _, requirement in requirements do
-					if not requirement(request.arguments) then
-						return
-					end
-				end
-			end
-
-			if not listeners then
-				return
-			end
-
-			task.spawn(function()
-				for _, listener in listeners do
-					listener(request.arguments)
-				end
-			end)
+	-- set as a local function to act as a priv method
+	local function handle_request(request: action)
+		if request.id and not self:claim_action(request) then
+			print("already claimed action!")
+			return
 		end
 
+		local listeners = self._listeners[request.topic]
+		local requirements = self._requirements
+
+		if requirements then
+			for _, requirement in requirements do
+				if not requirement(request.arguments) then
+					return
+				end
+			end
+		end
+
+		if not listeners then
+			return
+		end
+
+		task.spawn(function()
+			for _, listener in listeners do
+				listener(request.arguments)
+			end
+		end)
+	end
+
+	-- Polls all endpoints, runs functions if there's a message from the server.
+	local success, data = pcall_timeout(function()
 		local parameters = {
 			Url = `{self.ip}/servers/{self._poller_id}/messages`,
 			Method = "GET",
@@ -325,6 +311,7 @@ function poller:poll()
 			Headers = self.headers,
 		}
 
+		-- We poll here using threads, since polling sequentially will result in one request completing, while the other becoming blocked.
 		local thread_2 = function()
 			local global_messages = self:get_body(global_params, self.config.timeout)
 			if global_messages then
@@ -351,10 +338,6 @@ function poller:poll()
 		join_threads(threads)
 
 		return true
-	end
-
-	local success, data = pcall_timeout(function()
-		return closure()
 	end, self.config.timeout)
 
 	if not success then
@@ -362,7 +345,7 @@ function poller:poll()
 	end
 end
 
--- continuously polls
+-- Creates threads to continuously poll & send heartbeats
 function poller:listen()
 	self._heartbeat = task.spawn(function()
 		while true do
@@ -382,7 +365,7 @@ function poller:listen()
 	end)
 end
 
--- registers & polls
+-- Registers the server and listens
 function poller:init()
 	local start_reg = os.clock()
 	local body = self:register()
@@ -402,6 +385,7 @@ function poller:init()
 	self:listen()
 end
 
+-- Creates the poller classs
 function poller.new(config: Config)
 	config.name = config.name or generate_name()
 

@@ -43,9 +43,9 @@
 --
 
 return {
-	ip_address = "",
+	ip_address = "SERVER_IP_HERE",
 	port = 5000,
-	secret = "",
+	secret = "SECRET_HERE",
 
 	polling_delay = 1,
 	heartbeat_delay = 15,

@@ -21,20 +21,19 @@ This module handles:
 
 You must have both [rbx-relay](https://github.com/boxyfour/rbx-relay) and [rbx-bot-relay](https://github.com/boxyfour/rbx-bot-relay) installed and running.
 
-Your game must also have "Allow HTTP Requests" enabled under "Security" in "Game Settings".
+Your game must also have "Allow HTTP Requests" enabled
 
 ## usage
 
+Check out examples/ to see how you can use the module.
+
 ### Rojo
 
-If you're using Rojo, you can either ~~import the module through wally, or~~ (will be done in the future) clone the repository, and move src/poller/ into your desired packages folder.
-
-Then, you can require the module and use it like any other class! Look at some of the examples to see how you can use the module effectively.
+If you're using Rojo, you can either ~~import the module through wally, or~~ (will be done in the future) clone the repository, and move src/poller/ into your packages folder.
 
 ### Studio
 
-Download the RBXM from the [releases](https://github.com/boxyfour/rbx-client-relay/releases) tab, and drag it into your game,
-Then, you can require the module and use it like any other class! Look at some of the examples to see how you can use the module effectively.
+Download the rbxm from the [releases](https://github.com/boxyfour/rbx-client-relay/releases) tab, and drag it into your game. Place it into your packages folder, require it, and have fun!
 
 ## Important
 

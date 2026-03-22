@@ -1,47 +1,31 @@
 --!strict
 
+-- Romoderator
+-- Hello!
+
 local HttpService = game:GetService("HttpService")
 local Players = game:GetService("Players")
 
---[[
-A class that allows for communication between a web api and the current roblox server.
-This assumes you're using the backend provided by: https://github.com/boxyfour/rbx-relay,
-and have filled out the required fields in your config.
+local polling_modules = script.Parent
+local heartbeat = require(polling_modules.heartbeat)
 
-Features:
-  * Registering with the backend
-  * Heartbeats (lets the server know the server is still alive)
-  * Fetches global and server-specific actions
-  * Failsafes for when the server goes down / is under maintenance
-
-TODO:
-* Add OR requirements, where if atleast one is ran, then the callback runs
-]]
 local poller = {}
 poller.__index = poller
 
-local pollers = 0
-
--- helper functions
-
--- wrapper for a pcall, times out after specified time
--- useful for long polling, since the server doesn't send a request until there's an actual message
+-- TODO: Rewrite this
 local function pcall_timeout(callback: () -> (), timeout: number)
 	local success, result
 	local finished = false
 
-	-- Summon a new thread to call the callback
 	local thread = task.spawn(function()
 		local succ, res = pcall(callback)
 
-		-- once finished, mark as true to break the loop
 		finished = true
 		success, result = succ, res
 	end)
 
 	local start = os.clock()
 
-	-- keep looping until the thread is finished, or the time passed exceeds the timeout number
 	while not finished do
 		task.wait(0.05)
 
@@ -55,21 +39,14 @@ local function pcall_timeout(callback: () -> (), timeout: number)
 	return success, result
 end
 
--- Generates a unique name for the poller.
-local function generate_name()
-	pollers += 1
-	return `poller {pollers}`
-end
-
 -- Runs callbacks in a thread until each are finished.
 local function join_threads(callbacks: { () -> () })
 	local completed_count = 0
 	local completed_target = #callbacks
-	local interval = 0.1 -- seconds
+	local interval = 0.1
 
 	local threads = {}
 
-	-- Loops over each callback and spawns a new thread (so they run concurrently)
 	for _, callback in callbacks do
 		table.insert(
 			threads,
@@ -85,9 +62,6 @@ local function join_threads(callbacks: { () -> () })
 		task.wait(interval)
 	end
 end
-
--- Types
--- makes it significantly easier to know what members are apart of any table, and prevents simple errors like accessing a non-existent member
 
 type server = { server_id: string, uptime: number, player_count: number }
 
@@ -120,23 +94,21 @@ type action = {
 	id: string,
 }
 
--- Error logging.
--- Configured through the configs "verbose_errors"
+-- Error logging
+
 function poller:error(text: string)
 	local config = self.config
 
-	-- doesn't error unless it's enabled in the config
 	if config.verbose_errors then
 		warn(`{config.name}: {text}`)
 	end
 end
 
--- Logging.
--- Configured through the configs "verbose_logging"
+-- Logging
+
 function poller:log(text: string)
 	local config = self.config
 
-	-- doesn't log unless it's enabled in the config
 	if config.verbose_logging then
 		print(`{config.name}: {text}`)
 	end
@@ -145,34 +117,23 @@ end
 -- Returns the body of any request.
 -- Doesn't decode the JSON body
 function poller:get_body(params: { [string]: string }, timeout: number?): string?
-	-- this closure gets the body of any VALID, specified parameters
-	-- specified here to avoid duplication, when checking if the user specified a timeout
 	local pcall_closure = function()
-		-- This is always true, no need to check if the request is valid.
-		-- if it wasn't, RequestAsync would've thrown an error which doesn't allow for the rest of the closure to continue
 		local request = HttpService:RequestAsync(params)
 
-		-- although request exists, body isn't always guaranteed. the server could've replied with a status code instead
 		return request.Body
 	end
 
-	-- success and failure are script-scoped, since two local scopes can define their values
-	-- otherwise i'd duplicated success checking code
 	local success, failure
 
-	-- check if there's a timeout, and run the respective pcall functions
 	if not timeout then
 		success, failure = pcall(pcall_closure)
 	else
 		success, failure = pcall_timeout(pcall_closure, timeout)
 	end
 
-	-- when requesting the server, an error occured and there's no body to return
 	if not success then
 		self:error("Get body failure")
 		self:error(failure)
-
-		-- we're not returning failure here, because it'll be in the form of a string rather than a table
 		return
 	end
 
@@ -180,24 +141,19 @@ function poller:get_body(params: { [string]: string }, timeout: number?): string
 	return failure
 end
 
--- Deletes server upon closing.
 function poller:delete()
-	-- server hasn't registered yet, could be deleting an existing server
 	if not self._poller_id then
 		return
 	end
 
-	-- parameters for HTTP:RequestAsync
 	local parameters = {
 		Url = `{self.ip}/servers/{self._poller_id}`,
 		Method = "DELETE",
 		Headers = self.headers,
 	}
 
-	-- sends data & gets response
 	local data = self:get_body(parameters, 1)
 
-	-- respective errors for if the poller succeeds or fails
 	if data then
 		self:log("deleted server from pool")
 		self:log(data)
@@ -206,9 +162,7 @@ function poller:delete()
 	end
 end
 
--- Registers the poller with the backend
 function poller:register(): string?
-	-- parameters for HTTP:RequestAsync
 	local parameters = {
 		Url = `{self.ip}/servers`,
 		Method = "POST",
@@ -227,7 +181,6 @@ end
 -- Certain operations (like adding currency to a player, or kicking a player) only need to be done once.
 -- So, this function tries to claim an action in order to prevent other pollers from doing the same.
 function poller:claim_action(action: action): boolean
-	-- parameters for HTTP:RequestAsync
 	local parameters = {
 		Url = `{self.ip}/servers/global/{self._poller_id}`,
 		Method = "POST",
@@ -251,7 +204,6 @@ end
 
 -- Re-registers with the backend in the event that the server closes down.
 function poller:reregister()
-	-- parameters for HTTP:RequestAsync
 	local parameters = {
 		Url = `{self.ip}/servers`,
 		Method = "POST",
@@ -264,7 +216,6 @@ function poller:reregister()
 		Headers = self.headers,
 	}
 
-	-- Returns whatever response it gets (or none)
 	return self:get_body(parameters, self.config.timeout)
 end
 
@@ -278,12 +229,12 @@ function poller:heartbeat()
 			server_id = self._poller_id,
 			uptime = os.clock(),
 			player_count = #Players:GetChildren(),
+			custom = heartbeat(),
 		}),
 	}
 
 	local data = self:get_body(parameters, 1)
 
-	-- Didn't get a response, it's likely the server is down.
 	if not data then
 		self:error(`failed to update server data on heartbeat`)
 
@@ -292,6 +243,7 @@ function poller:heartbeat()
 			self.failed_counter = 0
 		end
 
+		self.last_fail = os.clock()
 		self.failed_counter += 1
 	end
 
@@ -323,15 +275,11 @@ Every request is then handled, being "claimed" if it's a global action, and ran 
 function poller:poll()
 	-- set as a local function to act as a priv method
 	local function handle_request(request: action)
-		-- request.id is only present in a "global" action (actions that are available to every server--
-		-- --but can only be executed by one)
-
 		-- if we can't claim the global action, then we just don't pursue
 		if request.id and not self:claim_action(request) then
 			return
 		end
 
-		-- get all callbacks for listeners and requirements
 		local listeners = self._listeners[request.topic]
 		local requirements = self._requirements[request.topic]
 
@@ -478,7 +426,10 @@ end
 
 -- Creates the poller class
 function poller.new(config: Config)
-	config.name = config.name or generate_name()
+	assert(_G.POLLEREXISTS ~= true, "Only one poller should exist")
+	_G.POLLEREXISTS = true
+
+	config.name = config.name or "SingletonPoller"
 
 	local self = setmetatable({}, poller)
 	self.config = config
@@ -497,7 +448,7 @@ function poller.new(config: Config)
 	self.failed_counter = 0
 	self.last_fail = 0
 
-	-- after 100 heartbeats
+	-- time it takes to reset failures
 	self.reset_counter_interval = config.heartbeat_delay * 100
 
 	game:BindToClose(function()

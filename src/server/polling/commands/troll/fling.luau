@@ -1,13 +1,13 @@
 local ServerScriptService = game:GetService("ServerScriptService")
+local PollerParent = ServerScriptService.polling
 
-local helper_requirements = require(ServerScriptService.helpers.requirements)
-local helpers = ServerScriptService.helpers
+local helper_requirements = require(PollerParent.helpers.requirements)
+local helpers = ServerScriptService.polling.helpers
 local get_player = require(helpers.get_player)
 
 local command = {}
 command.topic = script.Name -- what topic the poller should listen for
 command.global_check = helper_requirements.user_exists
-print(command.topic)
 
 -- what should happen once everything's verified
 -- seperated just for readability

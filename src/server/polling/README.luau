@@ -1,0 +1,1 @@
+--! Hello! If you're planning to use this script, please go to my github for instructions. Everything is explained there.

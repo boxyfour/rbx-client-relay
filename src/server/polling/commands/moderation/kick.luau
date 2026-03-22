@@ -1,7 +1,9 @@
 local ServerScriptService = game:GetService("ServerScriptService")
-local helper_requirements = require(ServerScriptService.helpers.requirements)
+local PollerParent = ServerScriptService.polling
 
-local helpers = ServerScriptService.helpers
+local helper_requirements = require(PollerParent.helpers.requirements)
+
+local helpers = ServerScriptService.polling.helpers
 local get_player = require(helpers.get_player)
 
 local command = {}

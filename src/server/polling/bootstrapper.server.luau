@@ -1,11 +1,12 @@
 --!strict
 local ServerScriptService = game:GetService("ServerScriptService")
+local PollerParent = ServerScriptService.polling
 
-local PollerRef = ServerScriptService.polling
+local PollerRef = PollerParent.main
 local PollerClass = require(PollerRef)
 
-local config = require(ServerScriptService.configs.config)
-local commands_folder = ServerScriptService.commands
+local config = require(ServerScriptService.polling.configs.config)
+local commands_folder = PollerParent.commands
 
 local poller = PollerClass.new(config)
 
@@ -29,6 +30,7 @@ for _, category: Folder in commands_folder:GetChildren() do
 
 		local module: command = require(command)
 		poller:on(module.topic, module.execute, module.global_check)
+
 		print(`Registered command: {module.topic}`)
 	end
 end
